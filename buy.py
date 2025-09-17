@@ -68,13 +68,13 @@ def wait_until_trade_time():
 # ---------------- TRADING LOGIC ----------------
 def run_trading():
     now = datetime.datetime.now(ny_tz)
-    print(f"\n[{now}] Checking trading job...")
+    print(f"\n[{now}] Checking trading job...", flush=True)
 
     if not is_market_open_now():
-        print("Market is closed today. Skipping trade.")
+        print("Market is closed today. Skipping trade.", flush=True)
         return
 
-    print("Market is OPEN. Running strategy...")
+    print("Market is OPEN. Running strategy...", flush=True)
 
     # Load models and scaler
     model_paths = sorted([os.path.join(ENSEMBLE_MODELS_DIR, f) for f in os.listdir(ENSEMBLE_MODELS_DIR) if f.endswith(".h5")])
@@ -118,7 +118,7 @@ def run_trading():
     ensemble_preds = np.mean([m.predict(X_seq, verbose=0) for m in models], axis=0)
     signal = int(ensemble_preds[0,1] > 0.5)
     target_symbol = TICKERS[signal]
-    print("Predicted signal:", "GLD" if signal == 1 else "SLV")
+    print("Predicted signal:", "GLD" if signal == 1 else "SLV", flush=True)
 
     # Position tracking
     if os.path.exists(STATE_FILE):
@@ -130,7 +130,7 @@ def run_trading():
     current_holding = state["holding"]
 
     if current_holding != target_symbol:
-        print(f"Switching position: {current_holding} -> {target_symbol}")
+        print(f"Switching position: {current_holding} -> {target_symbol}", flush=True)
 
         if current_holding is not None and state["qty"] > 0:
             api.submit_order(symbol=current_holding, qty=state["qty"], side="sell", type="market", time_in_force="day")
@@ -138,25 +138,24 @@ def run_trading():
 
         account = api.get_account()
         cash = float(account.cash)
-        print(f"Cash: {cash}")
 
         last_price = yf.download(target_symbol, period="1d", interval="1m")["Close"].iloc[-1]
         qty = int(cash // last_price)
 
         if qty > 0:
             api.submit_order(symbol=target_symbol, qty=qty, side="buy", type="market", time_in_force="day")
-            print(f"Bought {qty} {target_symbol}")
+            print(f"Bought {qty} {target_symbol}", flush=True)
 
             state["holding"] = target_symbol
             state["qty"] = qty
             with open(STATE_FILE, "w") as f:
                 json.dump(state, f)
     else:
-        print(f"Holding steady in {current_holding} (no trade).")
+        print(f"Holding steady in {current_holding} (no trade).", flush=True)
 
 # ---------------- MAIN LOOP ----------------
 if __name__ == "__main__":
-    print("Starting trading loop. Will wait until next scheduled trade...")
+    print("Starting trading loop. Will wait until next scheduled trade...", flush=True)
     while True:
         wait_until_trade_time()
         run_trading()
