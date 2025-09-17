@@ -32,6 +32,7 @@ def get_alpaca_keys(secret_name="alpaca_paper", region_name="us-east-1"):
     try:
         response = client.get_secret_value(SecretId=secret_name)
         secret_dict = json.loads(response["SecretString"])
+        print(secret_dict)
         return secret_dict["API_KEY"], secret_dict["API_SECRET"]
     except Exception as e:
         raise RuntimeError(f"Failed to load Alpaca keys from Secrets Manager: {e}")
