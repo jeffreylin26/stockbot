@@ -4,7 +4,6 @@ import pytz
 import datetime
 import time
 import pandas_market_calendars as mcal
-from apscheduler.schedulers.background import BackgroundScheduler
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -23,54 +22,50 @@ FEATURES = [
     "gs_ratio", "sma_gld", "sma_slv"
 ]
 STATE_FILE = "positions.json"
+TRADE_HOUR = 15  # 3 PM ET
+TRADE_MINUTE = 45  # 3:45 PM ET
 
-# ---------------- FETCH ALPACA KEYS FROM SECRETS MANAGER ----------------
+# ---------------- FETCH ALPACA KEYS ----------------
 def get_alpaca_keys(secret_name="alpaca_paper", region_name="us-east-1"):
-    """
-    Fetch Alpaca API keys from AWS Secrets Manager.
-    Expects secret JSON like: {"API_KEY": "API_SECRET"}
-    """
     session = boto3.session.Session()
     client = session.client(service_name='secretsmanager', region_name=region_name)
-
     try:
-        get_secret_value_response = client.get_secret_value(SecretId=secret_name)
-    except ClientError as e:
-        raise RuntimeError(f"Unable to retrieve secret '{secret_name}': {e}")
-
-    secret_string = get_secret_value_response['SecretString']
-
-    try:
-        secret_dict = json.loads(secret_string)
-        # Grab the first key-value pair
+        response = client.get_secret_value(SecretId=secret_name)
+        secret_dict = json.loads(response['SecretString'])
         api_key, api_secret = next(iter(secret_dict.items()))
         return api_key, api_secret
-    except (StopIteration, json.JSONDecodeError) as e:
-        raise RuntimeError(f"Secret '{secret_name}' is misconfigured. Error: {e}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to load Alpaca keys: {e}")
 
 API_KEY, API_SECRET = get_alpaca_keys()
 BASE_URL = "https://paper-api.alpaca.markets"
-
 api = REST(API_KEY, API_SECRET, BASE_URL)
 
 # ---------------- NYSE CALENDAR ----------------
 nyse = mcal.get_calendar("XNYS")
 ny_tz = pytz.timezone("America/New_York")
 
-
 def is_market_open_now():
     now = datetime.datetime.now(ny_tz)
     schedule = nyse.schedule(start_date=now.date(), end_date=now.date())
-
     if schedule.empty:
-        return False  # holiday / weekend
-
+        return False
     market_open = schedule.iloc[0]["market_open"].tz_convert(ny_tz)
     market_close = schedule.iloc[0]["market_close"].tz_convert(ny_tz)
-
     return market_open <= now <= market_close
 
+def wait_until_trade_time():
+    now = datetime.datetime.now(ny_tz)
+    trade_time = now.replace(hour=TRADE_HOUR, minute=TRADE_MINUTE, second=0, microsecond=0)
+    if now >= trade_time:
+        trade_time += datetime.timedelta(days=1)
+    while True:
+        sleep_seconds = (trade_time - datetime.datetime.now(ny_tz)).total_seconds()
+        if sleep_seconds <= 0:
+            break
+        time.sleep(min(sleep_seconds, 60))  # sleep in chunks of 60s to handle interrupts
 
+# ---------------- TRADING LOGIC ----------------
 def run_trading():
     now = datetime.datetime.now(ny_tz)
     print(f"\n[{now}] Checking trading job...")
@@ -81,14 +76,14 @@ def run_trading():
 
     print("Market is OPEN. Running strategy...")
 
-    # ---------------- LOAD MODELS & SCALER ----------------
-    model_paths = sorted([os.path.join(ENSEMBLE_MODELS_DIR, f) 
-                          for f in os.listdir(ENSEMBLE_MODELS_DIR) if f.endswith(".h5")])
+    # Load models and scaler
+    model_paths = sorted([os.path.join(ENSEMBLE_MODELS_DIR, f) for f in os.listdir(ENSEMBLE_MODELS_DIR) if f.endswith(".h5")])
     models = [load_model(p) for p in model_paths]
     scaler = joblib.load(f"{ENSEMBLE_MODELS_DIR}/scaler.gz")
 
-    # ---------------- FETCH LATEST DATA ----------------
-    data = yf.download(TICKERS + ["^GSPC", "DX-Y.NYB", "^TNX"], period="60d", threads=False)["Close"]
+    # Fetch latest data
+    all_tickers = TICKERS + ["^GSPC", "DX-Y.NYB", "^TNX"]
+    data = yf.download(all_tickers, period="60d", threads=False)["Close"]
     returns = data.pct_change()
 
     spread = data[TICKERS[0]] - data[TICKERS[1]]
@@ -115,18 +110,17 @@ def run_trading():
     })
     df_features.dropna(inplace=True)
 
-    # ---------------- SCALE & CREATE SEQUENCES ----------------
+    # Scale and create sequence
     X_scaled = scaler.transform(df_features[FEATURES].values)
-    X_seq = np.array([X_scaled[-TIME_STEPS:]])  # last sequence for prediction
+    X_seq = np.array([X_scaled[-TIME_STEPS:]])
 
-    # ---------------- ENSEMBLE PREDICTIONS ----------------
+    # Ensemble predictions
     ensemble_preds = np.mean([m.predict(X_seq, verbose=0) for m in models], axis=0)
-    signal = int(ensemble_preds[0,1] > 0.5)  # 1 = GLD, 0 = SLV
+    signal = int(ensemble_preds[0,1] > 0.5)
     target_symbol = TICKERS[signal]
-
     print("Predicted signal:", "GLD" if signal == 1 else "SLV")
 
-    # ---------------- POSITION TRACKING ----------------
+    # Position tracking
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r") as f:
             state = json.load(f)
@@ -139,13 +133,7 @@ def run_trading():
         print(f"Switching position: {current_holding} -> {target_symbol}")
 
         if current_holding is not None and state["qty"] > 0:
-            api.submit_order(
-                symbol=current_holding,
-                qty=state["qty"],
-                side="sell",
-                type="market",
-                time_in_force="day"
-            )
+            api.submit_order(symbol=current_holding, qty=state["qty"], side="sell", type="market", time_in_force="day")
             print(f"Sold {state['qty']} {current_holding}")
 
         account = api.get_account()
@@ -156,13 +144,7 @@ def run_trading():
         qty = int(cash // last_price)
 
         if qty > 0:
-            api.submit_order(
-                symbol=target_symbol,
-                qty=qty,
-                side="buy",
-                type="market",
-                time_in_force="day"
-            )
+            api.submit_order(symbol=target_symbol, qty=qty, side="buy", type="market", time_in_force="day")
             print(f"Bought {qty} {target_symbol}")
 
             state["holding"] = target_symbol
@@ -172,15 +154,11 @@ def run_trading():
     else:
         print(f"Holding steady in {current_holding} (no trade).")
 
-
+# ---------------- MAIN LOOP ----------------
 if __name__ == "__main__":
-    scheduler = BackgroundScheduler(timezone=ny_tz)
-    scheduler.add_job(run_trading, "cron", day_of_week="mon-fri", hour=15, minute=45)
-    scheduler.start()
-    print("Scheduler started. Waiting for next trading time...")
-
-    try:
-        while True:
-            time.sleep(60)
-    except (KeyboardInterrupt, SystemExit):
-        scheduler.shutdown()
+    print("Starting trading loop. Will wait until next scheduled trade...")
+    while True:
+        wait_until_trade_time()
+        run_trading()
+        # After trading, wait until next day
+        time.sleep(60)
