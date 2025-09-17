@@ -30,7 +30,7 @@ models = [load_model(p) for p in model_paths]
 scaler = joblib.load(f"{ENSEMBLE_MODELS_DIR}/scaler.gz")
 
 # ---------------- FETCH LATEST DATA ----------------
-data = yf.download(TICKERS + ["^GSPC", "DX-Y.NYB", "^TNX"], period="60d")["Close"]
+data = yf.download(TICKERS + ["^GSPC", "DX-Y.NYB", "^TNX"], period="60d", threads=False)["Close"]
 returns = data.pct_change()
 
 spread = data[TICKERS[0]] - data[TICKERS[1]]
