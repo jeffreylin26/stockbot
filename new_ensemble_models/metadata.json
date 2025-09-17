@@ -1,0 +1,40 @@
+{
+  "tickers": [
+    "GLD",
+    "SLV"
+  ],
+  "features": [
+    "GLD_return",
+    "SLV_return",
+    "spread",
+    "spread_mean",
+    "spread_std",
+    "z_score",
+    "sp500_return",
+    "usd_return",
+    "tnx_return",
+    "gs_ratio",
+    "sma_gld",
+    "sma_slv"
+  ],
+  "time_steps": 50,
+  "test_len": 252,
+  "timestamp": "20250917_062030",
+  "models": [
+    "models/ensemble_20250917_062030/model_0.h5",
+    "models/ensemble_20250917_062030/model_1.h5",
+    "models/ensemble_20250917_062030/model_2.h5",
+    "models/ensemble_20250917_062030/model_3.h5",
+    "models/ensemble_20250917_062030/model_4.h5",
+    "models/ensemble_20250917_062030/model_5.h5",
+    "models/ensemble_20250917_062030/model_6.h5",
+    "models/ensemble_20250917_062030/model_7.h5",
+    "models/ensemble_20250917_062030/model_8.h5",
+    "models/ensemble_20250917_062030/model_9.h5",
+    "models/ensemble_20250917_062030/model_10.h5",
+    "models/ensemble_20250917_062030/model_11.h5",
+    "models/ensemble_20250917_062030/model_12.h5",
+    "models/ensemble_20250917_062030/model_13.h5",
+    "models/ensemble_20250917_062030/model_14.h5"
+  ]
+}
