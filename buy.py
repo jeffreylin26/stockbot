@@ -18,8 +18,8 @@ FEATURES = [
     "gs_ratio", "sma_gld", "sma_slv"
 ]
 
-API_KEY = "PKO3LZIDZAM1695TJCYO"
-API_SECRET = "MZcO0STMgg84OAqslMe1zFNr7Yf6rUearnV04jQ2"
+API_KEY = "PKNKZKM8GNER66X3B7IY"
+API_SECRET = "yMoOnije1g6v2xFUw9kQ44jQc8PQVlchK7T2jAIo"
 BASE_URL = "https://paper-api.alpaca.markets"
 
 api = REST(API_KEY, API_SECRET, BASE_URL)
