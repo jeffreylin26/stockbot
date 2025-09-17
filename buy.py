@@ -1,4 +1,3 @@
-import yfinance as yf
 import pandas as pd
 import numpy as np
 import joblib
@@ -23,43 +22,59 @@ BASE_URL = "https://paper-api.alpaca.markets"
 
 api = REST(API_KEY, API_SECRET, BASE_URL)
 
+STATE_FILE = "positions.json"
+
 # ---------------- LOAD MODELS & SCALER ----------------
 model_paths = sorted([os.path.join(ENSEMBLE_MODELS_DIR, f) 
                       for f in os.listdir(ENSEMBLE_MODELS_DIR) if f.endswith(".h5")])
 models = [load_model(p) for p in model_paths]
 scaler = joblib.load(f"{ENSEMBLE_MODELS_DIR}/scaler.gz")
 
-# ---------------- FETCH LATEST DATA ----------------
-data = yf.download(TICKERS + ["^GSPC", "DX-Y.NYB", "^TNX"], period="60d", threads=False)["Close"]
-returns = data.pct_change()
+# ---------------- FETCH HISTORICAL DATA ----------------
+import yfinance as yf
+hist_data = yf.download(TICKERS + ["^GSPC", "DX-Y.NYB", "^TNX"], period="60d", threads=False)["Close"]
 
-spread = data[TICKERS[0]] - data[TICKERS[1]]
-spread_mean = spread.rolling(20, min_periods=1).mean()
-spread_std = spread.rolling(20, min_periods=1).std()
+# ---------------- FETCH LATEST PRICES ----------------
+latest_prices = {}
+for ticker in TICKERS + ["^GSPC", "DX-Y.NYB", "^TNX"]:
+    latest_prices[ticker] = api.get_latest_trade(ticker).price
+
+# ---------------- COMPUTE RETURNS ----------------
+returns = hist_data.pct_change()
+# Replace last row with "today's" returns using latest price
+today_returns = [(latest_prices[t] / hist_data[t].iloc[-1]) - 1 for t in TICKERS + ["^GSPC", "DX-Y.NYB", "^TNX"]]
+
+returns.iloc[-1] = today_returns  # update last row to reflect latest "close"
+
+# ---------------- DERIVED FEATURES ----------------
+spread = latest_prices[TICKERS[0]] - latest_prices[TICKERS[1]]
+spread_mean = hist_data[TICKERS[0]] - hist_data[TICKERS[1]]
+spread_mean = spread_mean.rolling(20, min_periods=1).mean().iloc[-1]
+spread_std = (hist_data[TICKERS[0]] - hist_data[TICKERS[1]]).rolling(20, min_periods=1).std().iloc[-1]
 z_score = (spread - spread_mean) / spread_std
-gs_ratio = data[TICKERS[0]] / data[TICKERS[1]]
-sma_gld = data[TICKERS[0]].rolling(20, min_periods=1).mean()
-sma_slv = data[TICKERS[1]].rolling(20, min_periods=1).mean()
+gs_ratio = latest_prices[TICKERS[0]] / latest_prices[TICKERS[1]]
+sma_gld = hist_data[TICKERS[0]].rolling(20, min_periods=1).mean().iloc[-1]
+sma_slv = hist_data[TICKERS[1]].rolling(20, min_periods=1).mean().iloc[-1]
 
 df_features = pd.DataFrame({
-    "GLD_return": returns[TICKERS[0]],
-    "SLV_return": returns[TICKERS[1]],
-    "spread": spread,
-    "spread_mean": spread_mean,
-    "spread_std": spread_std,
-    "z_score": z_score,
-    "sp500_return": returns["^GSPC"],
-    "usd_return": returns["DX-Y.NYB"],
-    "tnx_return": returns["^TNX"],
-    "gs_ratio": gs_ratio,
-    "sma_gld": sma_gld,
-    "sma_slv": sma_slv
+    "GLD_return": [today_returns[1]],   # GLD
+    "SLV_return": [today_returns[0]],   # SLV
+    "spread": [spread],
+    "spread_mean": [spread_mean],
+    "spread_std": [spread_std],
+    "z_score": [z_score],
+    "sp500_return": [today_returns[2]],
+    "usd_return": [today_returns[3]],
+    "tnx_return": [today_returns[4]],
+    "gs_ratio": [gs_ratio],
+    "sma_gld": [sma_gld],
+    "sma_slv": [sma_slv]
 })
-df_features.dropna(inplace=True)
 
-# ---------------- SCALE & CREATE SEQUENCES ----------------
+# ---------------- SCALE & CREATE SEQUENCE ----------------
 X_scaled = scaler.transform(df_features[FEATURES].values)
-X_seq = np.array([X_scaled[-TIME_STEPS:]])  # last sequence for prediction
+# replicate last TIME_STEPS rows to feed LSTM if needed
+X_seq = np.array([np.repeat(X_scaled, TIME_STEPS, axis=0)])
 
 # ---------------- ENSEMBLE PREDICTIONS ----------------
 ensemble_preds = np.mean([m.predict(X_seq, verbose=0) for m in models], axis=0)
@@ -68,10 +83,8 @@ target_symbol = TICKERS[signal]
 
 print("Predicted signal:", "GLD" if signal == 1 else "SLV")
 
-# ---------------- POSITION TRACKING ----------------
-STATE_FILE = "positions.json"
-
-# Load last position if file exists
+# ---------------- POSITION TRACKING & EXECUTION ----------------
+# Load last position if exists
 if os.path.exists(STATE_FILE):
     with open(STATE_FILE, "r") as f:
         state = json.load(f)
@@ -94,14 +107,13 @@ if current_holding != target_symbol:
         )
         print(f"Sold {state['qty']} {current_holding}")
 
-    # Get account cash to size new trade
+    # Account cash
     account = api.get_account()
     cash = float(account.cash)
-
     print(f"Cash: {cash}")
 
-    # Get latest price of target
-    last_price = api.get_latest_trade(target_symbol).price
+    # Use latest price for sizing
+    last_price = latest_prices[target_symbol]
     qty = int(cash // last_price)  # max whole shares
 
     if qty > 0:
