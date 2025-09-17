@@ -26,16 +26,27 @@ STATE_FILE = "positions.json"
 
 # ---------------- FETCH ALPACA KEYS FROM SECRETS MANAGER ----------------
 def get_alpaca_keys(secret_name="alpaca_paper", region_name="us-east-1"):
+    """
+    Fetch Alpaca API keys from AWS Secrets Manager.
+    Expects secret JSON like: {"API_KEY": "API_SECRET"}
+    """
     session = boto3.session.Session()
-    client = session.client(service_name="secretsmanager", region_name=region_name)
+    client = session.client(service_name='secretsmanager', region_name=region_name)
 
     try:
-        response = client.get_secret_value(SecretId=secret_name)
-        secret_dict = json.loads(response["SecretString"])
-        print(secret_dict)
-        return secret_dict["API_KEY"], secret_dict["API_SECRET"]
-    except Exception as e:
-        raise RuntimeError(f"Failed to load Alpaca keys from Secrets Manager: {e}")
+        get_secret_value_response = client.get_secret_value(SecretId=secret_name)
+    except ClientError as e:
+        raise RuntimeError(f"Unable to retrieve secret '{secret_name}': {e}")
+
+    secret_string = get_secret_value_response['SecretString']
+
+    try:
+        secret_dict = json.loads(secret_string)
+        # Grab the first key-value pair
+        api_key, api_secret = next(iter(secret_dict.items()))
+        return api_key, api_secret
+    except (StopIteration, json.JSONDecodeError) as e:
+        raise RuntimeError(f"Secret '{secret_name}' is misconfigured. Error: {e}")
 
 API_KEY, API_SECRET = get_alpaca_keys()
 BASE_URL = "https://paper-api.alpaca.markets"
