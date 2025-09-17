@@ -10,7 +10,7 @@ from alpaca_trade_api.rest import REST
 # ---------------- CONFIG ----------------
 TICKERS = ["SLV", "GLD"]
 TIME_STEPS = 50
-ENSEMBLE_MODELS_DIR = "new_ensemble_models/ensemble_20250917_062030"
+ENSEMBLE_MODELS_DIR = "new_ensemble_models"
 FEATURES = [
     "GLD_return", "SLV_return", "spread", "spread_mean", "spread_std",
     "z_score", "sp500_return", "usd_return", "tnx_return",
