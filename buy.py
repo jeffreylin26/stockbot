@@ -72,7 +72,7 @@ def run_trading():
 
     if not is_market_open_now():
         print("Market is closed today. Skipping trade.", flush=True)
-        # return
+        return
 
     print("Market is OPEN. Running strategy...", flush=True)
 
@@ -176,7 +176,7 @@ def run_trading():
 if __name__ == "__main__":
     print("Starting trading loop. Will wait until next scheduled trade...", flush=True)
     while True:
-        # wait_until_trade_time()
+        wait_until_trade_time()
         run_trading()
         # After trading, wait until next day
-        time.sleep(60000)
+        time.sleep(60)
