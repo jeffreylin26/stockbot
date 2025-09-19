@@ -81,11 +81,26 @@ def run_trading():
     models = [load_model(p) for p in model_paths]
     scaler = joblib.load(f"{ENSEMBLE_MODELS_DIR}/scaler.gz")
 
-    # Fetch latest data
+    # Fetch historical data
     all_tickers = TICKERS + ["^GSPC", "DX-Y.NYB", "^TNX"]
     data = yf.download(all_tickers, period="60d", threads=False)["Close"]
-    returns = data.pct_change()
 
+    # ---- Append live Alpaca prices for GLD & SLV ----
+    live_prices = {}
+    for sym in TICKERS:
+        try:
+            trade = api.get_latest_trade(sym)
+            live_prices[sym] = float(trade.price)
+        except Exception as e:
+            print(f"Warning: Could not fetch live price for {sym}: {e}")
+
+    if live_prices:
+        ts_now = pd.Timestamp.now(ny_tz)
+        for sym, price in live_prices.items():
+            data.loc[ts_now, sym] = price
+
+    # Recompute returns & features
+    returns = data.pct_change()
     spread = data[TICKERS[0]] - data[TICKERS[1]]
     spread_mean = spread.rolling(20, min_periods=1).mean()
     spread_std = spread.rolling(20, min_periods=1).std()
@@ -116,7 +131,7 @@ def run_trading():
 
     # Ensemble predictions
     ensemble_preds = np.mean([m.predict(X_seq, verbose=0) for m in models], axis=0)
-    signal = int(ensemble_preds[0,1] > 0.5)
+    signal = int(ensemble_preds[0, 1] > 0.5)
     target_symbol = TICKERS[signal]
     print("Predicted signal:", "GLD" if signal == 1 else "SLV", flush=True)
 
@@ -133,18 +148,22 @@ def run_trading():
         print(f"Switching position: {current_holding} -> {target_symbol}", flush=True)
 
         if current_holding is not None and state["qty"] > 0:
-            api.submit_order(symbol=current_holding, qty=state["qty"], side="sell", type="market", time_in_force="day")
+            api.submit_order(symbol=current_holding, qty=state["qty"],
+                             side="sell", type="market", time_in_force="day")
             print(f"Sold {state['qty']} {current_holding}")
 
         account = api.get_account()
         cash = float(account.cash)
 
-        last_price = yf.download(target_symbol, period="1d", interval="1m")["Close"].iloc[-1]
+        # ---- Use Alpaca live price for sizing ----
+        trade = api.get_latest_trade(target_symbol)
+        last_price = float(trade.price)
         qty = int(cash // last_price)
 
         if qty > 0:
-            api.submit_order(symbol=target_symbol, qty=qty, side="buy", type="market", time_in_force="day")
-            print(f"Bought {qty} {target_symbol}", flush=True)
+            api.submit_order(symbol=target_symbol, qty=qty,
+                             side="buy", type="market", time_in_force="day")
+            print(f"Bought {qty} {target_symbol} at ~{last_price}", flush=True)
 
             state["holding"] = target_symbol
             state["qty"] = qty
