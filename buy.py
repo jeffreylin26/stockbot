@@ -72,7 +72,7 @@ def run_trading():
 
     if not is_market_open_now():
         print("Market is closed today. Skipping trade.", flush=True)
-        return
+        # return
 
     print("Market is OPEN. Running strategy...", flush=True)
 
